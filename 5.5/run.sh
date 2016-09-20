@@ -13,7 +13,7 @@ chmod 644 /etc/mysql/conf.d/mysqld_charset.cnf
 
 StartMySQL ()
 {
-    /usr/bin/mysqld_safe > /dev/null 2>&1 &
+    /usr/bin/mysqld_safe ${EXTRA_OPTS} > /dev/null 2>&1 &
     # Time out in 1 minute
     LOOP_LIMIT=60
     for (( i=0 ; ; i++ )); do
@@ -30,7 +30,29 @@ StartMySQL ()
 
 CreateMySQLUser()
 {
-    #Setup DB
+    if [ "$MYSQL_PASS" = "**Random**" ]; then
+        unset MYSQL_PASS
+    fi
+
+    PASS=${MYSQL_PASS:-$(pwgen -s 12 1)}
+    _word=$( [ ${MYSQL_PASS} ] && echo "preset" || echo "random" )
+    echo "=> Creating MySQL user ${MYSQL_USER} with ${_word} password"
+
+    mysql -uroot -e "CREATE USER '${MYSQL_USER}'@'%' IDENTIFIED BY '$PASS'"
+    mysql -uroot -e "GRANT ALL PRIVILEGES ON *.* TO '${MYSQL_USER}'@'%' WITH GRANT OPTION"
+    echo "=> Done!"
+    echo "========================================================================"
+    echo "You can now connect to this MySQL Server using:"
+    echo ""
+    echo "    mysql -u$MYSQL_USER -p$PASS -h<host> -P<port>"
+    echo ""
+    echo "Please remember to change the above password as soon as possible!"
+    echo "MySQL user 'root' has no password but only allows local connections"
+    echo "========================================================================"
+}
+
+OnCreateDB()
+{
     if [ "$ON_CREATE_DB" = "**False**" ]; then
         unset ON_CREATE_DB
     else
@@ -38,34 +60,18 @@ CreateMySQLUser()
         mysql -uroot -e "CREATE DATABASE IF NOT EXISTS ${ON_CREATE_DB};"
         echo "Database created!"
     fi
-
-	if [ "$MYSQL_PASS" = "**Random**" ]; then
-	    unset MYSQL_PASS
-	fi
-
-	PASS=${MYSQL_PASS:-$(pwgen -s 12 1)}
-	_word=$( [ ${MYSQL_PASS} ] && echo "preset" || echo "random" )
-	echo "=> Creating MySQL user ${MYSQL_USER} with ${_word} password"
-
-	mysql -uroot -e "CREATE USER '${MYSQL_USER}'@'%' IDENTIFIED BY '$PASS'"
-	mysql -uroot -e "GRANT ALL PRIVILEGES ON *.* TO '${MYSQL_USER}'@'%' WITH GRANT OPTION"
-	echo "=> Done!"
-	echo "========================================================================"
-	echo "You can now connect to this MySQL Server using:"
-	echo ""
-	echo "    mysql -u$MYSQL_USER -p$PASS -h<host> -P<port>"
-	echo ""
-	echo "Please remember to change the above password as soon as possible!"
-	echo "MySQL user 'root' has no password but only allows local connections"
-	echo "========================================================================"
 }
 
 ImportSql()
 {
-	for FILE in ${STARTUP_SQL}; do
-	   echo "=> Importing SQL file ${FILE}"
-	   mysql -uroot < "${FILE}"
-	done
+    for FILE in ${STARTUP_SQL}; do
+        echo "=> Importing SQL file ${FILE}"
+        if [ "$ON_CREATE_DB" ]; then
+            mysql -uroot "$ON_CREATE_DB" < "${FILE}"
+        else
+            mysql -uroot < "${FILE}"
+        fi
+    done
 }
 
 # Main
@@ -75,6 +81,20 @@ fi
 
 if [ ${REPLICATION_SLAVE} == "**False**" ]; then
     unset REPLICATION_SLAVE
+fi
+
+# Initialize empty data volume and create MySQL user
+if [[ ! -d $VOLUME_HOME/mysql ]]; then
+    echo "=> An empty or uninitialized MySQL volume is detected in $VOLUME_HOME"
+    echo "=> Installing MySQL ..."
+    if [ ! -f /usr/share/mysql/my-default.cnf ] ; then
+        cp /etc/mysql/my.cnf /usr/share/mysql/my-default.cnf
+    fi
+    mysql_install_db || exit 1
+    touch /var/lib/mysql/.EMPTY_DB
+    echo "=> Done!"
+else
+    echo "=> Using an existing volume of MySQL"
 fi
 
 # Set MySQL REPLICATION - MASTER
@@ -110,24 +130,19 @@ if [ -n "${REPLICATION_SLAVE}" ]; then
     fi
 fi
 
-# Initialize empty data volume and create MySQL user
-if [[ ! -d $VOLUME_HOME/mysql ]]; then
-    echo "=> An empty or uninitialized MySQL volume is detected in $VOLUME_HOME"
-    echo "=> Installing MySQL ..."
-    if [ ! -f /usr/share/mysql/my-default.cnf ] ; then
-        cp /etc/mysql/my.cnf /usr/share/mysql/my-default.cnf
-    fi
-    mysql_install_db > /dev/null 2>&1
-    echo "=> Done!"
+
+echo "=> Starting MySQL ..."
+StartMySQL
+tail -F $LOG &
+
+# Create admin user and pre create database
+if [ -f /var/lib/mysql/.EMPTY_DB ]; then
     echo "=> Creating admin user ..."
-    StartMySQL
     CreateMySQLUser
-else
-    echo "=> Using an existing volume of MySQL"
-    StartMySQL
+    OnCreateDB
+    rm /var/lib/mysql/.EMPTY_DB
 fi
 
-tail -F $LOG &
 
 # Import Startup SQL
 if [ -n "${STARTUP_SQL}" ]; then
@@ -172,4 +187,4 @@ if [ -n "${REPLICATION_SLAVE}" ]; then
     fi
 fi
 
-fg %1
+fg

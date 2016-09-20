@@ -1,6 +1,8 @@
 tutum-docker-mysql
 ==================
 
+**This image will be deprecated soon. Please use the docker official image:** https://hub.docker.com/_/mysql/
+
 [![Deploy to Tutum](https://s.tutum.co/deploy-to-tutum.svg)](https://dashboard.tutum.co/stack/deploy/)
 
 Base docker image to run a MySQL database server
@@ -50,6 +52,13 @@ You can now test your deployment:
 
 Done!
 
+Passing extra configuration to start mysql server
+------------------------------------------------
+
+To pass additional settings to `mysqld`, you can use environment variable `EXTRA_OPTS`.
+For example, to run mysql using lower case table name, you can do:
+
+    docker run -d -p 3306:3306 -e EXTRA_OPTS="--lower_case_table_names=1" tutum/mysql
 
 Setting a specific password for the admin account
 -------------------------------------------------
@@ -71,11 +80,13 @@ Creating a database on container creation
 -------------------------------------------------
 
 If you want a database to be created inside the container when you start it up
-for the first time you can set the environment variable `MYSQL_DB` to string
+for the first time you can set the environment variable `ON_CREATE_DB` to a string
 that names the database.
 
-        docker run -d -p 3306:3306 -e ON_CREATE_DB="database" tutum/mysql
+        docker run -d -p 3306:3306 -e ON_CREATE_DB="newdatabase" tutum/mysql
 
+If this is combined with importing SQL files, those files will be imported into the
+created database.
 
 Mounting the database file volume
 ---------------------------------
